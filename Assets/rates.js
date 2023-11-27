@@ -13,35 +13,35 @@ async function loadJQuery() {
 }
 
 async function loadjQueryUI() {
-return new Promise(function (resolve, reject) {
-  const ui_style = document.createElement("link");
-  ui_style.href =
-    "https://ajax.googleapis.com/ajax/libs/jqueryui/1.13.2/themes/smoothness/jquery-ui.css";
-  ui_style.rel = "stylesheet";
-  document.head.appendChild(ui_style);
-  const ui_script = document.createElement("script");
-  ui_script.src =
-    "https://ajax.googleapis.com/ajax/libs/jqueryui/1.13.2/jquery-ui.min.js";
-  ui_script.type = "text/javascript";
-  ui_script.addEventListener("load", async () => {
-    resolve();
+  return new Promise(function (resolve, reject) {
+    const ui_style = document.createElement("link");
+    ui_style.href =
+      "https://ajax.googleapis.com/ajax/libs/jqueryui/1.13.2/themes/smoothness/jquery-ui.css";
+    ui_style.rel = "stylesheet";
+    document.head.appendChild(ui_style);
+    const ui_script = document.createElement("script");
+    ui_script.src =
+      "https://ajax.googleapis.com/ajax/libs/jqueryui/1.13.2/jquery-ui.min.js";
+    ui_script.type = "text/javascript";
+    ui_script.addEventListener("load", async () => {
+      resolve();
+    });
+    document.head.appendChild(ui_script);
   });
-  document.head.appendChild(ui_script);
-});
 }
 
 async function loadGAPI() {
-return new Promise(function (resolve, reject) {
-  const ui_script = document.createElement("script");
-  let API_KEY = document.getElementById('postalcode').dataset.key;
-  ui_script.src =
-    `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=places`;
-  ui_script.type = "text/javascript";
-  ui_script.addEventListener("load", async () => {
-    resolve();
+  return new Promise(function (resolve, reject) {
+    const ui_script = document.createElement("script");
+    let API_KEY = document.getElementById('postalcode').dataset.key;
+    ui_script.src =
+      `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=places&callback=initMap`;
+    ui_script.type = "text/javascript";
+    window.initMap = function() {
+      resolve();
+    };
+    document.head.appendChild(ui_script);
   });
-  document.head.appendChild(ui_script);
-});
 }
 
 (async function () {
@@ -83,20 +83,25 @@ async function shipQuote() {
   ).done(function (ipdata) {
     cords = ipdata.location.lat + "," + ipdata.location.lng;
     location = ipdata.location;
-    const geocoder = new google.maps.Geocoder();
+  });
+  const geocoder = new google.maps.Geocoder();
+  await new Promise((res, rej) => {
     geocoder
     .geocode({ location: {
-      lat: ipdata.location.lat,
-      lng: ipdata.location.lng,
+      lat: location.lat,
+      lng: location.lng,
       } 
     })
     .then((geodata) => {
       address = {
-        city: geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "locality").long_name,
+        city: (geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "locality")) ?
+          geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "locality").long_name:
+          geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "administrative_area_level_1").long_name,
         region: geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "administrative_area_level_1").short_name,
         postal: geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "postal_code").long_name,
         country: geodata.results[0].address_components.find( (address_component) => address_component.types[0] === "country").short_name,
       };
+      res();
     });
   });
 
@@ -294,7 +299,7 @@ async function shipQuote() {
                 fields: ['formatted_address','geometry','address_component'],
                 sessiontoken: sessiontoken
               };
-            var detailsRequest = await new Promise((res, rej) => {
+            let detailsRequest = await new Promise((res, rej) => {
               placesService.getDetails(detailsParams, function(results, status) {
                 if (status === google.maps.places.PlacesServiceStatus.OK) {
                   res(results)
@@ -304,6 +309,23 @@ async function shipQuote() {
               //place call, reset session
               sessiontoken = crypto.randomUUID();
               let placeAddress = getAddress(detailsRequest);
+              if(placeAddress.code === '0000') {
+                const geocoder = new google.maps.Geocoder();
+                let geoRequest = await new Promise((res, rej) => {
+                  geocoder.geocode({ location: {
+                    lat: detailsRequest.geometry.location.lat(),
+                    lng: detailsRequest.geometry.location.lng(),
+                    } 
+                  })
+                  .then((geodata) => {
+                    res(geodata);
+                  });
+                });
+                let codeaddress = geoRequest.results.find(result => 
+                  result.address_components.find(address_component => address_component.types.indexOf('postal_code') > -1)
+                );
+                placeAddress = getAddress(codeaddress);
+              }
               $("#postalcode")
                 .val(detailsRequest.formatted_address)
                 .data({
@@ -750,21 +772,19 @@ async function shipQuote() {
     }, 500);
   };
 
-  const _onError = function (XMLHttpRequest, textStatus) {
-    console.log(
-      "onError",
-      XMLHttpRequest.responseJSON,
-      textStatus,
-      cart_restore
-    );
+  const _onError = function (XMLHttpRequest, textStatus, errorThrown) {
     $("#rates_loading").hide();
-    if (XMLHttpRequest.responseJSON.description)
+    if (XMLHttpRequest.responseJSON.description && cart_restore === false){
       $(".rates_cart_error")
         .html(XMLHttpRequest.responseJSON.description)
         .show();
-    if (XMLHttpRequest.responseJSON.error.length)
+    } else if (XMLHttpRequest.responseJSON.error && XMLHttpRequest.responseJSON.error.length && cart_restore === false) {
       $(".rates_cart_error")
         .html(XMLHttpRequest.responseJSON.error[0])
+        .show();
+    } else if (XMLHttpRequest.responseJSON.country && cart_restore === false)
+      $(".rates_cart_error")
+        .html(XMLHttpRequest.responseJSON.country[0])
         .show();
     if (cart_restore === false) restoreCart();
   };
